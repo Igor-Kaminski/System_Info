@@ -10,4 +10,4 @@ Displays live CPU and memory usage along with disk partition details.
 
 ## Usage
 
-python system_monitor.py
+```python system_monitor.py
