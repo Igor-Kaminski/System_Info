@@ -3,8 +3,11 @@ from rich.table import Table
 from rich.live import Live
 from rich.panel import Panel
 from rich.progress import Progress, BarColumn, TextColumn
+from rich.console import Group
 import psutil
 import GPUtil
+import time
+
 
 
 console = Console()
@@ -44,20 +47,15 @@ with console.status("Loading system resources..."):
     
     
 
-console.rule("[bold red]System Monitor") 
+disk_table = Table(title="[cyan]Disk Partitions", title_justify="center")
 
-console.print()
-
-disk_table = Table(title="[cyan]Disk Partitions")
-
-disk_table.add_column("[red]Device", justify="right", style="cyan", no_wrap=True)
-disk_table.add_column("[red]Mount", justify="right", style="green", no_wrap=True)
-disk_table.add_column("[red]File System", justify="right", style="magenta", no_wrap=True)
-disk_table.add_column("[red]Total", justify="right", style="yellow", no_wrap=True)
-disk_table.add_column("[red]Used", justify="right", style="cyan", no_wrap=True)
-disk_table.add_column("[red]Free", justify="right", style="green", no_wrap=True)
-disk_table.add_column("[red]Percent Used", justify="right", style="magenta", no_wrap=True)
-
+disk_table.add_column("[red]Device", justify="center", style="cyan", no_wrap=True)
+disk_table.add_column("[red]Mount", justify="center", style="green", no_wrap=True)
+disk_table.add_column("[red]File System", justify="center", style="magenta", no_wrap=True)
+disk_table.add_column("[red]Total", justify="center", style="yellow", no_wrap=True)
+disk_table.add_column("[red]Used", justify="center", style="cyan", no_wrap=True)
+disk_table.add_column("[red]Free", justify="center", style="green", no_wrap=True)
+disk_table.add_column("[red]Percent Used", justify="center", style="magenta", no_wrap=True)
 
 for partition in disk_partitions:
     try:
@@ -72,16 +70,13 @@ for partition in disk_partitions:
             f"{usage.percent} %"
         )
     except PermissionError:
-        continue 
-console.print(disk_table, justify="center")
-
-console.print()
+        continue
 
 
 cpu_progress = Progress(
-    TextColumn(f"[bold cyan]CPU Usage: {{task.percentage:>5.1f}}%"),
+    TextColumn("[bold cyan]CPU Usage: {task.percentage:>5.1f}%"),
     BarColumn(bar_width=40, complete_style="bright_green", finished_style="bright_green"),
-    TextColumn(f"[bold white]{cpu_temp:.1f}°C" if cpu_temp else "[bold white]N/A"),
+    TextColumn("[bold white]{task.description}"),
 )
 cpu_task = cpu_progress.add_task("", total=100)
 cpu_progress.update(cpu_task, completed=cpu_percent)
@@ -94,9 +89,9 @@ cpu_panel = Panel(
 )
 
 gpu_progress = Progress(
-    TextColumn(f"[bold green]GPU Usage: {{task.percentage:>5.1f}}%"),
+    TextColumn("[bold green]GPU Usage: {task.percentage:>5.1f}%"),
     BarColumn(bar_width=40, complete_style="bright_green", finished_style="bright_green"),
-    TextColumn(f"[bold white]{gpu_temp:.1f}°C" if gpu_temp else "[bold white]N/A"),
+    TextColumn("[bold white]{task.description}"),
 )
 gpu_task = gpu_progress.add_task("", total=100)
 gpu_progress.update(gpu_task, completed=gpu_usage if gpu_usage else 0)
@@ -109,9 +104,9 @@ gpu_panel = Panel(
 )
 
 memory_progress = Progress(
-    TextColumn(f"[bold magenta]Memory Usage: {{task.percentage:>5.1f}}%"),
+    TextColumn("[bold magenta]Memory Usage: {task.percentage:>5.1f}%"),
     BarColumn(bar_width=40, complete_style="bright_magenta", finished_style="bright_magenta"),
-    TextColumn(f"[bold white]({virtual_memory_used:.1f}GB / {virtual_memory_total:.1f}GB)"),
+    TextColumn("[bold white]{task.description}"),
 )
 memory_task = memory_progress.add_task("", total=100)
 memory_progress.update(memory_task, completed=virtual_memory.percent)
@@ -123,9 +118,72 @@ memory_panel = Panel(
     padding=(1, 2)
 )
 
-console.print(cpu_panel)
-console.print(gpu_panel)
-console.print(memory_panel)
+def update_display():
+    current_cpu = psutil.cpu_percent(1)
+    cpu_progress.update(cpu_task, completed=current_cpu)
+    
+    try:
+        temperatures = psutil.sensors_temperatures()
+        current_cpu_temp = None
+        if 'coretemp' in temperatures:
+            current_cpu_temp = temperatures['coretemp'][0].current
+        elif 'k10temp' in temperatures:
+            current_cpu_temp = temperatures['k10temp'][0].current
+        elif 'cpu_thermal' in temperatures:
+            current_cpu_temp = temperatures['cpu_thermal'][0].current
+    except:
+        current_cpu_temp = None
+    
+    cpu_temp_text = f"{current_cpu_temp:.1f}°C" if current_cpu_temp else "N/A"
+    cpu_progress.update(cpu_task, description=cpu_temp_text)
+    
+    try:
+        gpus = GPUtil.getGPUs()
+        if gpus:
+            gpu = gpus[0]
+            current_gpu_usage = gpu.load * 100
+            current_gpu_temp = gpu.temperature
+            gpu_progress.update(gpu_task, completed=current_gpu_usage)
+        else:
+            current_gpu_usage = 0
+            current_gpu_temp = None
+    except:
+        current_gpu_usage = 0
+        current_gpu_temp = None
+    
+    gpu_temp_text = f"{current_gpu_temp:.1f}°C" if current_gpu_temp else "N/A"
+    gpu_progress.update(gpu_task, description=gpu_temp_text)
+    
+    current_memory = psutil.virtual_memory()
+    current_memory_total = current_memory.total / (1024 ** 3)
+    current_memory_used = current_memory_total - (current_memory.available / (1024 ** 3))
+    memory_progress.update(memory_task, completed=current_memory.percent)
+    
+    memory_text = f"({current_memory_used:.1f}GB / {current_memory_total:.1f}GB)"
+    memory_progress.update(memory_task, description=memory_text)
+
+
+def generate_display():
+    title_panel = Panel("[bold red]System Monitor", padding=(0, 0), title_align="center")
+    
+    return Group(
+        title_panel,
+        disk_table,
+        cpu_panel,
+        gpu_panel,
+        memory_panel
+    )
+
+with Live(generate_display(), console=console, auto_refresh=False) as live:
+    try:
+        while True:
+            update_display()
+            live.update(generate_display(), refresh=True)
+            time.sleep(1)
+    except KeyboardInterrupt:
+        pass
+
+console.print("\n[bold red]System Monitor stopped.[/bold red]")
 
 
 
